@@ -4,10 +4,16 @@ from mutagen import File as MutagenFile
 
 app = Flask(__name__)
 
-BASE_DIR = os.getcwd()
+# 1) лимит на загрузку (поставь сколько нужно)
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1 GB
+
+# 2) стабильный путь к папке проекта (важно для хостинга)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+
 DEFAULT_COVER_URL = "/static/covers/default.jpg"
 
+# 3) создать uploads если её нет
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
@@ -198,4 +204,5 @@ def uploaded_file(filename):
 
 
 if __name__ == "__main__":
+
     app.run(debug=True)
