@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Music Player</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <div class="container">
+
+    <div class="header">
+      <div class="brand">
+        <div class="logo">🎧</div>
+        <div>
+          <h1>My Music</h1>
+          <div class="subtitle">Музыкант → Альбом → Трек</div>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <input type="text" id="globalSearch" placeholder="Поиск по артистам…" onkeyup="searchArtists()" />
+      </div>
+    </div>
+
+    <div id="viewHome">
+      <div id="artistGrid" class="artist-grid"></div>
+    </div>
+
+    <div id="viewArtist" class="hidden">
+
+      <div class="page-top">
+        <button class="back-btn" onclick="goHome()">
+          <span class="back-ico">←</span> Назад
+        </button>
+
+        <div class="page-title">
+          <img id="pageArtistCover" class="page-cover" src="/static/covers/default.jpg" alt="cover" />
+          <div>
+            <div id="pageArtistName" class="page-name">—</div>
+            <div id="pageArtistMeta" class="page-meta">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="upload-card">
+        <div class="upload-row">
+          <input type="text" id="albumName" placeholder="Альбом" />
+          <input type="file" id="fileInput" multiple />
+          <button class="primary-btn" onclick="upload()">Загрузить</button>
+        </div>
+        <div class="upload-hint">
+          Загрузка идёт в: <span id="uploadTarget" class="pill">—</span>
+        </div>
+      </div>
+
+      <div class="artist-search">
+        <input type="text" id="artistSearch" placeholder="Поиск треков внутри музыканта…" onkeyup="searchTracksInArtist()" />
+      </div>
+
+      <div id="artistAlbums" class="albums"></div>
+    </div>
+
+  </div>
+
+  <!-- Floating Player -->
+  <div class="player" id="playerShell">
+    <div class="sweep"></div>
+
+    <div class="player-left">
+      <img id="playerCover" class="player-cover" src="/static/covers/default.jpg" alt="cover" />
+      <div class="player-meta">
+        <div id="nowPlaying" class="player-title">Ничего не играет</div>
+        <div class="player-sub">
+          <span id="currentTime">0:00</span>
+          <span class="sep">/</span>
+          <span id="duration">0:00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="player-center">
+      <div class="player-buttons">
+
+        <button class="icon-btn" onclick="prevTrack()" aria-label="Previous">
+          <!-- prev -->
+          <svg class="ico" viewBox="0 0 24 24">
+            <path d="M19 20L9 12l10-8v16z"></path>
+            <path d="M5 5v14"></path>
+          </svg>
+        </button>
+
+        <button class="icon-btn primary" id="playPauseBtn" onclick="togglePlay()" aria-label="Play/Pause">
+          <svg class="ico" viewBox="0 0 24 24" id="playPauseIcon">
+            <!-- play by default -->
+            <path d="M8 5l11 7-11 7V5z"></path>
+          </svg>
+        </button>
+
+        <button class="icon-btn" onclick="nextTrack()" aria-label="Next">
+          <!-- next -->
+          <svg class="ico" viewBox="0 0 24 24">
+            <path d="M5 4l10 8-10 8V4z"></path>
+            <path d="M19 5v14"></path>
+          </svg>
+        </button>
+
+      </div>
+
+      <input type="range" id="progress" value="0" min="0" max="100" />
+    </div>
+
+    <div class="player-right">
+      <div class="vol">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+          <path d="M15.5 8.5a4.5 4.5 0 0 1 0 7"></path>
+        </svg>
+        <input type="range" id="volume" min="0" max="1" step="0.01" />
+      </div>
+    </div>
+
+    <audio id="player"></audio>
+  </div>
+
+<script>
+  let library = {};
+  let currentArtist = null;
+  let queue = [];
+  let currentIndex = -1;
+
+  const ICON_PLAY = `<path d="M8 5l11 7-11 7V5z"></path>`;
+  const ICON_PAUSE = `<path d="M7 5h3v14H7z"></path><path d="M14 5h3v14h-3z"></path>`;
+
+  function setPlayPauseIcon(isPlaying){
+    const icon = document.getElementById("playPauseIcon");
+    if (!icon) return;
+    icon.innerHTML = isPlaying ? ICON_PAUSE : ICON_PLAY;
+  }
+
+  // ===== Color extraction that actually works + fallback =====
+  function clamp255(x){ return Math.max(0, Math.min(255, x|0)); }
+
+  function hashColorsFromString(str){
+    // стабильные “приятные” цвета если canvas не смог
+    let h = 2166136261;
+    for (let i=0;i<str.length;i++){
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    // раскладываем хеш в RGB, чуть подкрашиваем чтобы было “не грязно”
+    const r1 = 80 + (h & 127);
+    const g1 = 70 + ((h>>8) & 127);
+    const b1 = 90 + ((h>>16) & 127);
+
+    const r2 = 80 + ((h>>3) & 127);
+    const g2 = 70 + ((h>>11) & 127);
+    const b2 = 90 + ((h>>19) & 127);
+
+    const r3 = 80 + ((h>>6) & 127);
+    const g3 = 70 + ((h>>14) & 127);
+    const b3 = 90 + ((h>>22) & 127);
+
+    return [`${r1},${g1},${b1}`, `${r2},${g2},${b2}`, `${r3},${g3},${b3}`];
+  }
+
+  function setAmbientVars(c1,c2,c3){
+    const root = document.documentElement.style;
+    root.setProperty("--c1", c1);
+    root.setProperty("--c2", c2);
+    root.setProperty("--c3", c3);
+  }
+
+  function applyAmbientFromCover(url){
+    const img = new Image();
+
+    // важно: кеш может мешать onload в редких случаях — добавим bust
+    const bustUrl = url + (url.includes("?") ? "&" : "?") + "v=" + Date.now();
+
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try{
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently:true });
+
+        // маленький размер — быстрый average
+        const w = 48, h = 48;
+        canvas.width = w; canvas.height = h;
+        ctx.drawImage(img, 0, 0, w, h);
+
+        const data = ctx.getImageData(0,0,w,h).data;
+
+        // соберём 3 “региональных” средних — чтобы фон был живее
+        function avgRegion(x0,y0,x1,y1){
+          let r=0,g=0,b=0,c=0;
+          for(let y=y0;y<y1;y++){
+            for(let x=x0;x<x1;x++){
+              const i = (y*w + x)*4;
+              const rr=data[i], gg=data[i+1], bb=data[i+2], aa=data[i+3];
+              if (aa < 16) continue;
+              // отсекаем почти чёрное/серое, чтобы glow не был “грязным”
+              const max=Math.max(rr,gg,bb), min=Math.min(rr,gg,bb);
+              if (max < 18) continue;
+              if (max-min < 8 && max < 80) continue;
+              r+=rr; g+=gg; b+=bb; c++;
+            }
+          }
+          if(!c) return null;
+          // чуть приглушаем кислоту
+          r = clamp255((r/c)*0.92);
+          g = clamp255((g/c)*0.92);
+          b = clamp255((b/c)*0.92);
+          return `${r},${g},${b}`;
+        }
+
+        const c1 = avgRegion(0,0,24,24) || avgRegion(0,0,48,48);
+        const c2 = avgRegion(24,0,48,24) || avgRegion(0,0,48,48);
+        const c3 = avgRegion(12,24,36,48) || avgRegion(0,0,48,48);
+
+        if (c1 && c2 && c3) {
+          setAmbientVars(c1,c2,c3);
+          return;
+        }
+        // fallback если вдруг не набрали цветов
+        const [f1,f2,f3] = hashColorsFromString(url);
+        setAmbientVars(f1,f2,f3);
+      }catch(e){
+        const [f1,f2,f3] = hashColorsFromString(url);
+        setAmbientVars(f1,f2,f3);
+      }
+    };
+
+    img.onerror = () => {
+      const [f1,f2,f3] = hashColorsFromString(url);
+      setAmbientVars(f1,f2,f3);
+    };
+
+    img.src = bustUrl;
+  }
+
+  async function loadLibrary(){
+    const grid = document.getElementById("artistGrid");
+    grid.innerHTML = `<div class="skeleton">Загрузка…</div>`;
+    const res = await fetch("/tracks");
+    library = await res.json();
+    renderHome();
+  }
+
+  function renderHome(){
+    showHome();
+    const grid = document.getElementById("artistGrid");
+    grid.innerHTML = "";
+
+    const artistNames = Object.keys(library);
+    if (artistNames.length === 0){
+      grid.innerHTML = `<div class="empty">Пока нет музыки. Зайди в музыканта и загрузи треки.</div>`;
+      return;
+    }
+
+    artistNames.forEach((name)=>{
+      const artist = library[name];
+      const albums = artist.albums || {};
+      let trackCount = 0;
+      Object.values(albums).forEach(a => trackCount += (a.tracks||[]).length);
+
+      const card = document.createElement("div");
+      card.className = "artist-card gradient-ring";
+      card.onclick = () => openArtist(name);
+
+      const cover = document.createElement("img");
+      cover.className = "artist-card-cover";
+      cover.src = artist.cover || "/static/covers/default.jpg";
+
+      const title = document.createElement("div");
+      title.className = "artist-card-title";
+      title.textContent = name;
+
+      const meta = document.createElement("div");
+      meta.className = "artist-card-meta";
+      meta.textContent = `${Object.keys(albums).length} альбом(ов) • ${trackCount} трек(ов)`;
+
+      card.appendChild(cover);
+      card.appendChild(title);
+      card.appendChild(meta);
+      grid.appendChild(card);
+    });
+  }
+
+  function openArtist(name){
+    currentArtist = name;
+
+    const artist = library[name];
+    const albums = artist.albums || {};
+
+    document.getElementById("pageArtistCover").src = artist.cover || "/static/covers/default.jpg";
+    document.getElementById("pageArtistName").textContent = name;
+
+    let trackCount = 0;
+    Object.values(albums).forEach(a => trackCount += (a.tracks||[]).length);
+    document.getElementById("pageArtistMeta").textContent =
+      `${Object.keys(albums).length} альбом(ов) • ${trackCount} трек(ов)`;
+
+    document.getElementById("uploadTarget").textContent = `${name} / (введи альбом)`;
+    document.getElementById("artistSearch").value = "";
+
+    queue = [];
+    currentIndex = -1;
+
+    const wrap = document.getElementById("artistAlbums");
+    wrap.innerHTML = "";
+
+    Object.keys(albums).forEach((albumName)=>{
+      const album = albums[albumName];
+
+      const albumDiv = document.createElement("div");
+      albumDiv.className = "album";
+
+      const header = document.createElement("div");
+      header.className = "album-header";
+
+      const cover = document.createElement("img");
+      cover.className = "album-cover";
+      cover.src = album.cover || artist.cover || "/static/covers/default.jpg";
+
+      const info = document.createElement("div");
+      info.className = "album-info";
+
+      const title = document.createElement("h2");
+      title.textContent = albumName;
+
+      const meta = document.createElement("div");
+      meta.className = "album-meta";
+      meta.textContent = `${(album.tracks||[]).length} трек(ов)`;
+
+      info.appendChild(title);
+      info.appendChild(meta);
+      header.appendChild(cover);
+      header.appendChild(info);
+      albumDiv.appendChild(header);
+
+      (album.tracks||[]).forEach((t)=>{
+        const idx = queue.length;
+        const trackTitle = t.title || t.name || t.file || "Без названия";
+
+queue.push({
+  name: trackTitle,
+  path: t.path,
+  cover: t.cover || album.cover || artist.cover || "/static/covers/default.jpg",
+  artist: name,
+  album: albumName
+});
+
+        const trackDiv = document.createElement("div");
+        trackDiv.className = "track gradient-ring";
+        trackDiv.dataset.index = idx;
+
+        const left = document.createElement("div");
+        left.className = "track-left";
+
+        const tCover = document.createElement("img");
+        tCover.className = "track-cover";
+        tCover.src = t.cover || album.cover || artist.cover || "/static/covers/default.jpg";
+
+        const text = document.createElement("div");
+        text.className = "track-text";
+
+        const tName = document.createElement("div");
+        tName.className = "track-name";
+        tName.textContent = trackTitle;
+
+        const tMeta = document.createElement("div");
+        tMeta.className = "track-meta";
+        tMeta.textContent = `${name} • ${albumName}`;
+
+        text.appendChild(tName);
+        text.appendChild(tMeta);
+
+        left.appendChild(tCover);
+        left.appendChild(text);
+
+        const btn = document.createElement("button");
+        btn.className = "play-btn";
+        btn.innerHTML = `<svg class="ico" viewBox="0 0 24 24">${ICON_PLAY}</svg>`;
+        btn.onclick = (e)=>{ e.stopPropagation(); playTrack(idx); };
+
+        trackDiv.onclick = ()=> playTrack(idx);
+
+        trackDiv.appendChild(left);
+        trackDiv.appendChild(btn);
+        albumDiv.appendChild(trackDiv);
+      });
+
+      wrap.appendChild(albumDiv);
+    });
+
+    showArtist();
+    highlightActive();
+  }
+
+  function goHome(){ currentArtist=null; showHome(); renderHome(); }
+  function showHome(){
+    document.getElementById("viewHome").classList.remove("hidden");
+    document.getElementById("viewArtist").classList.add("hidden");
+  }
+  function showArtist(){
+    document.getElementById("viewHome").classList.add("hidden");
+    document.getElementById("viewArtist").classList.remove("hidden");
+  }
+
+  function searchArtists(){
+    const q = document.getElementById("globalSearch").value.toLowerCase();
+    document.querySelectorAll(".artist-card").forEach((card)=>{
+      card.style.display = card.innerText.toLowerCase().includes(q) ? "block" : "none";
+    });
+  }
+
+  function searchTracksInArtist(){
+    const q = document.getElementById("artistSearch").value.toLowerCase();
+    document.querySelectorAll("#artistAlbums .track").forEach((t)=>{
+      t.style.display = t.innerText.toLowerCase().includes(q) ? "flex" : "none";
+    });
+  }
+
+  async function upload(){
+    if(!currentArtist){ alert("Сначала открой карточку музыканта."); return; }
+    const fileInput = document.getElementById("fileInput");
+    const albumName = (document.getElementById("albumName").value || "Без альбома").trim() || "Без альбома";
+    if(fileInput.files.length===0){ alert("Выбери mp3 файлы."); return; }
+
+    const formData = new FormData();
+    for(let i=0;i<fileInput.files.length;i++) formData.append("files", fileInput.files[i]);
+    formData.append("artist", currentArtist);
+    formData.append("album", albumName);
+
+    await fetch("/upload",{ method:"POST", body: formData });
+    fileInput.value = "";
+
+    await loadLibrary();
+    openArtist(currentArtist);
+  }
+
+  function playTrack(index){
+    if(index<0 || index>=queue.length) return;
+
+    const audio = document.getElementById("player");
+    const coverEl = document.getElementById("playerCover");
+    const nowPlaying = document.getElementById("nowPlaying");
+
+    currentIndex = index;
+    audio.src = queue[index].path;
+    audio.play();
+
+    nowPlaying.textContent = `${queue[index].artist} — ${queue[index].name}`;
+    coverEl.src = queue[index].cover || "/static/covers/default.jpg";
+
+    setPlayPauseIcon(true);
+
+    // важно: просим фон обновиться от обложки
+    applyAmbientFromCover(coverEl.src);
+
+    highlightActive();
+  }
+
+  function nextTrack(){ if(currentIndex < queue.length-1) playTrack(currentIndex+1); }
+  function prevTrack(){ if(currentIndex > 0) playTrack(currentIndex-1); }
+
+  function togglePlay(){
+    const audio = document.getElementById("player");
+    if(!audio.src) return;
+    if(audio.paused) audio.play();
+    else audio.pause();
+  }
+
+  function highlightActive(){
+    document.querySelectorAll(".track").forEach((el)=>{
+      const idx = Number(el.dataset.index);
+      el.classList.toggle("active", idx===currentIndex);
+    });
+  }
+
+  const audio = document.getElementById("player");
+  const progress = document.getElementById("progress");
+  const volume = document.getElementById("volume");
+
+  volume.value = 1;
+  audio.volume = 1;
+
+  volume.addEventListener("input", ()=>{ audio.volume = volume.value; });
+
+  audio.addEventListener("timeupdate", ()=>{
+    const percent = (audio.currentTime / audio.duration) * 100;
+    progress.value = percent || 0;
+    document.getElementById("currentTime").textContent = formatTime(audio.currentTime);
+  });
+
+  audio.addEventListener("loadedmetadata", ()=>{
+    document.getElementById("duration").textContent = formatTime(audio.duration);
+  });
+
+  progress.addEventListener("input", ()=>{
+    const time = (progress.value / 100) * audio.duration;
+    audio.currentTime = time;
+  });
+
+  audio.addEventListener("ended", ()=> nextTrack());
+  audio.addEventListener("play", ()=> setPlayPauseIcon(true));
+  audio.addEventListener("pause", ()=> setPlayPauseIcon(false));
+
+  function formatTime(seconds){
+    if(!seconds || !isFinite(seconds)) return "0:00";
+    const m = Math.floor(seconds/60);
+    const s = Math.floor(seconds%60);
+    return m + ":" + (s<10 ? "0"+s : s);
+  }
+
+  // стартовый glow — чтобы сразу было видно, что фон живой
+  applyAmbientFromCover("/static/covers/default.jpg");
+  loadLibrary();
+</script>
+
+</body>
+</html>
